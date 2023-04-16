@@ -39,11 +39,13 @@ test_data = dataset[-test_set_size:]
 
 class AR():
 
-    def __init__(self, p):
+    def __init__(self, p, train_per, gust_th=1.6):
 
         self.p = p
         self.lags = range(1,p+1)
         self.phis = None
+        self.train_per = train_per
+        self.gust_th = gust_th
 
     def get_phis(self, train_data):
 
