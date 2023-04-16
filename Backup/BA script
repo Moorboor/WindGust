@@ -1,0 +1,234 @@
+## 1. Introduction
+Is how related to the Research Question 
+State of the art
+what are the methods we can use
+How does the data set look like
+What are current problems in doing so
+What can be the outcome of involving more machine learning
+What are the preassumtions, where are the biases for the model.
+programming in pytorch
+
+
+How to use bibliography correctly?
+I need a google extension for that
+
+- First of all an introduction why the study in general is important and interesting. What are the long term interests and benefits. Then shortly continue with the core idea and how we want to solve the problem by machine learning. 
+- After the first attention is catched, explaining why this problem is so hard. Why can't we use regular machine learning. Therefore make a quick deep dive into what wind actually is.
+- Now again we shift the attention to the methods, what methods are at hand, how do we derive the methods, what is our thinking process and why should someone care about it
+- 
+
+computer with capabilities are all around. The problems are unsolved and it's sometimes hard to understand why they are still there. renewable energy is a key to a better world. wind gusts are a field which is not studies well. combination of machine learning and physics and engineering is at the rise of the edge. Software is booming. Artificial intelligence is booming. Only computationally cheap and accurate predictions one second into the future.
+
+---
+
+### Why are we studying wind gusts?
+Why are we trying to find cheap models for wind gust prediction? 
+Renewable energy and clean energy is the aim of the centuary. When we consider energy sources that are fueling our planet we primarily think of the sun or geothermal energy. The sun can have different effects of sourcing energy to the planet. Excluding the primary way of direct energy rich sunlight, there are second order effects of the sunlight. On of them are the heating of air and the movement of that air that comes with it. These movement of air which are in fact gases that we call wind. 
+Because of the different movement patterns of wind that are unpredictable as explained in detail below, the energy of wind movements are more or less rich. (newton energy law?)
+In the mission of capturing the energy delivered by the wind intrinsically by the sun, we need robust and reliable machines called wind turbines. (history and evolution turbines)
+in the process of transforming kinetic energy in form of movement into electrical energy, turbine motors are losing significant parts of wind energy in the first place, and then by friction which is radiated as heat energy in the second place. The current mechanical design of most wind turbines(which?) are transforming the kinetic energy of wind into electrical energy which is immediately fed in into the electrical net. The energy which wind turbines use are from the whole scale of eddies. Smaller eddies feed from kinetic energy of larger eddies until viscosity. Frictional forces in the viscosity releases heat energy. This is called the energy cascade.
+Lewis Fry Richardson...
+	This is why turbulence has a huge range of length and time scales. This makes analysis of turbulent flows very complex. To a point where it is probably the most significant challenge facing fields of fluid mechanics. And the greatest problem of the 21 centurary according to [Feynman](https://www.utwente.nl/en/max-planck-center/research/turbulence/#multiphase-flows)
+Now because the wind moves with unpredictable turbulent patterns, the concentration of unforeseen high wind velocities are called wind gusts. Note that the definition of what exactly a wind gust is is not strictly defind and a hard problem of itself. Since the turbine motor behaves like a leaky filter to the unforeseen changes (wind gusts) the tranformation into electrical energy fed into the nationwide electrical net is equally charged with the turbulent patterns. 
+Old designs of wind turbines were able to filter out these turbulent patterns called fluctuations by mechanical inertia of the energy generator. Fundamentally, the inertia ment an energy loss to friction and nowerdays the design has changed. Modern wind turbine energy generators have not the mechanical inertia anymore and have therefore higher energy transforming rates between the two forms of energy. 
+This is in general not problematic but evidences show that the fluctuation of the wind turbines can be measured in the nationwide electrical net and under unfortunate circumstances fluctuations can accumulate to higher amplitude fluctuations which can...?. One potential solution is to introduce artifical inertia directly at the wind energy generators. Now to maximize the energy transformation rate models that provide predictions of incoming wind gusts are of greater interest.
+
+How can wind gust prediction used else? Drone movement?
+
+---
+
+## What is wind? 
+We know it from weather and that air flows from high pressure area to low pressure area. But what is under that fassade?
+Air is a mixture of gas, 78% oxygene, nitrogene, other gases. It depends on the composition of the atmosphere. But on earth its like... Disregarding for a moment the composition of the gax mix and considering a pure gas. The movement of every gas can be viewed as wind. It moves because of entropy and the law. It holds energy and its energy is from the sun. along the way it interacts physically with the world. 
+Eletrical charges within the air. Humidity and temperature also enduce movement within the gas mixture. What is in the mixture of the gas can also have an impact on the wind. 
+concentration means pressure and it means order an energy. It wants to lower its energy potential and to higher the entropy. 
+you can view it like this: even in a closed system without anything else, the wind and the air would have an chaotic behavior. 
+But why is gas moveing turbulent?
+An inner friction and stress onto the wind, brownian molecular movement, temperature, electrical charges, turbulence
+but the system would come to a hold and every kind of energy from large eddies to small eddies until they get into warmth energy and radiate away. 
+small changes in the initial state will induce chaotic unrecognizable patterns. 
+the earth itself is moving, 
+wind is in an embedded system. as the whole world is. 
+We see that wind is turbulent itself and tries to lose all energy and get to the lowest energy level. Wind is the action or the movement of the mixture of gas or the molecules in the process of losing energy and getting to the lowest energy level. 
+
+An additive bottom up approach of what factors influence wind. 
+celestrial form of the planet. It is a round form and because of that air at the equator is because of the rotation faster pressed and pushed than air at the poles. Gravity has also an impact on the gases. Air move closer to the center of gravity is stronger pulled. The effect is minimal because the air layers and the atmosphere is thinner than the skin of an apple assuming that the planet is proportionally big as an apple. But the pressure of higher layers still accumulates forces onto the lower layers.
+-corriolis effect, seasonal effect because of the earths rotation. 
+
+terraform, at the top near the outer sky layer the wind is mostly untouched from the ground.
+experiments with tubes are showing that at the most surface the wind speed is zero. Near the middle of the tube the wind is equally distributed in their velocities. Countrarily, in comparison to laminar flow. Because the turbulant eddies of different sizes are also moving with different velocities and mixing together. But because rotation of the earth the wind at the ground level is pressed forward. Formations of mountains. There is the no-slip condition. (Distribution of velocitiese turbulent, laminar or viscous sublayer), turbulent boundary, laminar sublayer, intermediate (buffer layer) reynold number rises
+
+Adding now oceans brings us water and therefore humidity in the air mixture. Evaporating water lifts up and mixes into the air. The different pressures, weights and teperatures mixes the air. The humid air has other properties? This mixture creates electrical charges as well. 
+The wet air moves in form of wind to other places. In addition the moon as an celestrial body induces gravity on the planet. Orthogonal water bodies are at the side facing the moon attracted and on the backside accumulated. These lunar phasic changes of water levels also have an effect on the air movement. Furthermore, there are effects of gulf stream and other streams because of the formation of the oceanic ground. And tectonic plates have also their impact. 
+Other natural phenomenons as well, like earthquare, erruptions of vulcans and celestrial body impacts, solar storms and more.
+Oceanic chemicals as salt can have an effect when mixing with air. highering the friction.
+
+To further introduce factors that influence the wind, we consider now organic materials and effects induced by living creatures. 
+But everything could influence the moving air or could mix with the moving air. Odors and chemical compounts as well as dirt and bird shit. 
+
+It would be extreme hard to measure all these forces that are influencing or acting on the wind. Who could afford to measure them. And how would one measure them. The most simple and characteristic catching way method is to directly measureing the wind velocity. The sensor used at the North sea captures only this property. From that we are assuming that we got the main characteristic of the air movement. 
+
+The cheapest and most reducing way is capturing the wind velocities with low frequency sensors as on the FINO1 platform done. The dataset is exceptional in the length of continuous data over 20 months. And the whole sequence of on a discrete axis measured x-axis can be viewed as a time series. We notice that all physical laws and proporties of wind are deminished and are not captured by the sensor. They are not explicitly definded but captured in the recording. Although the large numbers of noises makes it hard to regain the proporties back.
+
+### What is a time series?
+A time series shows at discrete time points the values of the past and of the future. The dependent variable y shows the measured value. The order is clear and past and future are structually ordered. We assume equidistance.
+
+### Time series analysis?
+Goal of the time series analysis is to find a mathematical model that captures the evolution of the time series as well as possible. For every time point in the future a mathematical model fulfills the proporties of delivering a prediction based on the same mathematical formula?
+
+Before we find a mathematical model that captures the characteristics of the wind, we want to define what the task is.
+
+### Wind gust
+As a wind gust is understood as an abrupt positive change of wind speeds it can be more presice defined under which time frames the abrupt increase should occur. In our definition of wind gusts, we assume that wind gusts are only defind by the time interval and the acceleration rate. Therefore we only consider to look at the acceleration exclusively. Most accurately we are interested in the first derivative of the wind speed. denoted as... To get the rate of change of wind velocity in every point in time. 
+Since the sensoral modality of our recordings only allow a discrete rate of points in time, this is by definition a property of time series. We can take the closest as possible differentiation. Therefore our best estimation of the wind acceleration is defind as $u = v_{t+1}-v_t$. This discrete differentiation of wind speed is futher in the thesis called wind fluctuation. 
+What exactly is the first differentiation in comparison to substracting the mean? Where are the benefits?
+
+---
+### Task description
+We have to find a precise description of the goal and the task. Are we wanting to most accurately predict the evolution of the time series? 
+
+Now in the time-series analysis we want to find a model which maximizes the accuracy of predicting the fluctuation of time future. 
+Why are we only interested in predicting one second into the future and only into the question whether there is a wind gust or not. 
+
+We choose to work with the 100m dataset to minimize the interruptions of the tower. 
+From here on, there are different model types that can be used to mathematically describe the evolution of the time series. 
+
+We want to restrict us not to predict the fluctuation of winds of the time series but narrow the problem to the significant piece down. We want to predict the significant positive change in wind fluctuations. So wind gusts. 
+Such that the mathematical model is accurate when it predicts the absence or the appearance of a wind gust. 
+
+$\displaystyle Wind Gust =\begin{cases} True & Model(x) \ge 1.6 \\ False & Model(x) < 1.6\end{cases}$
+
+Analytical decomposition of the problem and the dataset. 
+The know the length of the dataset and the extremata minimum and maximum. We know the covariance and the correlation. We know that the sum of the fluctuation is around zero. And therefore the mean is around zero. We know that the data is time-dependent ordered. And under external assumptions we can consider that the time series in itself is turbulent, and chaotic. But we can underline the fact that future values relay heavily on past values. Because Newton?
+Can we infere more information? Maybe size of eddies something like that?
+The probability density function PDF reveal that the turbulent behavior of the accelerations and the velocities are stretched-exponential distributed with fat tails. And not gaussian distributed. 
+
+### What is Machine learning?
+learning from data. It is statistics and generating predictions without explicitly directing it to do so. What means learning from data. Normal instructions are hard coded. 
+mathematical models are not adaptive to the dataset. 
+Machine learning models are trained by example data which should capture the characteristics of the real data as well as possible. 
+Now we have to differentiate unsupervised, supervised and other categories of machine learning. A training phase procedure where the model is exposed to the training data without geting any labels made by the human is called unsupervised learning. Countrarily, in the case of supervised learning a model is exposed to the training examples but the predictions made by the model are immediately rated and the model directed by labels to predict the label made by the supervisor.
+
+A bias and therefore a form of supervision can already happened by selecting the tools which records the data in the first place. 
+Neural networks and random forests are using random sampled values. The values are drawn from a gaussian distribution. They are normal distributed and therefore inherently not fitting the wind fluctuation. A large majority of events are normal distributed and therefore well descripted by a gaussian distribution but wind is turbulent. 
+
+levels of escalation machine learning, complexity of models, why greater models are more energy consuming and harder to debug. Why we don't really can understand why the black magic behind these calculations is. Finally, why we want to control the models and only step by step want to introduce complexity. Only with clear tradeoffs. 
+
+### Autoregression models
+Answer why AR models are fitting. The complexity is very low, nearly the lowest, it can be measured by the compounts. And the computations are very cheap and simple. 
+Stationarity of time series when using ar models?
+The idea of autoregression is to select n timesteps called lag of the data x to predict the datapoint x+1. The idea is that the next value relays heavily on the past values. The prediction is therefore a combination of the few past values where the weighting of the linear combination called parameters phis needs to be computed. The weighting in which the past values are considered into the value of the future is commonly denoted as $\phi$. 
+Clear example of what a AR model calculation could look like. 
+
+When the $\displaystyle\sum_{i=1}^{n}(\phi_i) > 1$ This will lead to the explosion of the evolution of the time-series. 
+Countrarily, if significantly smaller? Then the prediction will always be smaller than the real value. Which is ok.
+
+We can used AR models but we have to exclude the white noise which is commonly part of the model. In this way the output has not gaussian distribution parts in it. 
+
+How to find the parameters $\phi$?
+Yuler-walker estimation, autocorrelation function, autocovariance.
+
+Further steps are the normalization of the $\phi$ parameters. Until now they are smaller 1. This means that the produced prediction is smaller than the real value. 
+
+
+Pure statistical processes
+
+---
+
+### Optimization of wind gust prediction with PDFs
+
+Until now there is the probelm that the thresholds must be set artificially. The thresholds at what we consider a wind gust is not robust. When changing the dataset, the explicitly defined thresholds can cause totally unexpected outputs. A way around this would be to consider probability densities. And to reintroduce the white noise which we let out until here. We can derive the variance $\sigma^2_w$ using the yuler-walker-estimation. 
+
+$\displaystyle P(u>u_x)=\int_{u_x}^{\infty}\mathcal{N}\left(\mu=\phi_1x_{t-1}+\phi_2x_{t-2},\sigma^2_w\right) du \in \left[0,1\right]$
+
+$\displaystyle = 1- \left[\frac{1}{2}\left(1+\operatorname{erf}\left(\frac{u_x-\hat{x}_{t+1}}{\sqrt{2\sigma^2_w}}\right)\right)\right]$ 
+
+This means that we need to calculate with error function: 
+
+$\displaystyle \operatorname {erf} z={\frac {2}{\sqrt {\pi }}}\int _{0}^{z}e^{-t^{2}}$
+
+instead, that we measure show whether the predicted point is over a threshold, we need a reasonable proportion to the real value. The idea is let $u_x$ be the mean $\mu$ of a gaussian distribution. That means that the model would rather than predict a value spill out a gaussian distribution with the variance $\sigma^2_w$. The real value $u$ could be in Such that we have to integrate over a gaussian distribution. 
+
+
+
+## 2. Methods
+ar model, linear interpolation, ar model fills missing values, ar models different orders and no white noise
+dataset information, mean, max, min, nans
+What is a nan
+ROC curve, 
+1. In the first iteration the Yuler-Walker estimation was applied once to estimate model parameters $\hat{\phi}$ . Those are futher used as $\phi$. That means that training happend once and then the prediction. 
+2. In the second iteration, the procedure was changed. The Yuler walker estimation was applied after each prediction. Such that it is not a training anymore but instantaneous learning and then the prediction. yuler-walker-estimation time steps $\tau$. 
+
+## 3. Result
+comparison to sokus predictions
+
+## 4. Discussion
+Why which result was achieved,
+data set sensor,
+
+## Acknowledgement
+Thanks for the FINO1 dataset, ... soku and nieters and ofc phillipp maass
+
+## Appendix
+figures
+
+
+## Bibliography
+sources
+
+
+## Glossar
+wind
+fluctuation
+viscosity - resistance to movement
+eddies
+differentiation := $v_{t+1}-v_t$
+AR-Model := $AR(p)$
+turbulence
+machine learning
+model
+Yuler walker estimation
+pdf
+time series
+lags
+phi := $\phi$
+wind gust threshold := $u_x$
+autocorrelation
+white noise := $\langle w_t \rangle = \mu_w = 0$, und die Varianz $\sigma^2_w$
+gamma distribution
+stretched exponential distribution
+probability quantiles 
+normal distribution :=  $X \sim \mathcal{N}(\mu, \, \sigma^2)$
+variance := $\sigma^2$
+covariance
+timesteps := $\tau$
+
+integrating
+error function
+predicted point?
+real value
+ROC
+train, test data
+accuracy
+linear interpolation
+
+
+
+
+
+
+
+### Who is my audience?
+- marleen, fey, felix, benni, hannah, rebecca, julian, mama, ly, ally, levin, bogdan...
+- Soku
+- Nieters, Phillipp Maass
+
+#### What the audience might want
+People who want to understand what I'm doing and what I'm care about. They want to understand my thought pattern. They what to find out whether my thoughts are valid or leaky. They want to find out what meaningful is after my definition.
+
+#### My Goals
+I want to show them why I think the topic is interesting and the hard work is worth the time. I want to make them understand how I analyze the problem and how I solve it. I want to open-source my thought patterns. Most importantly, I want to carry them along facing the problem and astonishing the complexity of the problem and guide them through the backdoors on the way on the solution until they find the same or equivalent solutions on their own. I want that the takeaway is that they recognize the beauty of the problem and are able to estimate the efforts needed to solve it and to avoid the pitfalls and to analytically decompose until pulverization of the problem. 
+
+- It's not important that they understand the mathematical notation
+- It's not important that they exactly know the methods I use or what machine learning can be
+- It's not important that they understand the fine nuances of the problems, but that they are fronted with the clear details of some eminent problems. That they understand how hard they are to solve but the act of solving tedious parts is my pleasure.
