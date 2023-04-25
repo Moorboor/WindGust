@@ -2,7 +2,9 @@ import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 import os
-#rng = np.random.default_rng(11)
+from scipy import special
+rng = np.random.default_rng(11)
+
 
 
 DIRNAME = os.path.abspath("")
@@ -26,7 +28,7 @@ def autocovariance(data, lag):
     return np.mean(cov)
 
 
-datasets = {key: lerp(value) for key, value in datasets.items()}                    # linear interpolation
+#datasets = {key: lerp(value) for key, value in datasets.items()}                    # linear interpolation
 datasets = {key: dataset[1:] - dataset[:-1] for key, dataset in datasets.items()}   # Differentiation to make data stationary
 dname = "2015-2017_90m"                                                             # Active dataset
 dataset = datasets[dname]
@@ -37,19 +39,49 @@ test_data = dataset[-test_set_size:]
 
 
 
-class AR():
+class ARMA():
 
-    def __init__(self, p, train_per, gust_th=1.6):
+    def __init__(self, *, p, q, train_per, gust_th=1.6):
 
         self.p = p
-        self.lags = range(1,p+1)
-        self.phis = None
+        self.q = q
         self.train_per = train_per
         self.gust_th = gust_th
+        
+        self.lags = range(1,p+1)
+        self.phis = None
 
-    def get_phis(self, train_data):
 
-        acf = [autocovariance(train_data, lag) / train_data.std()**2 for lag in self.lags]      # Autocorrelation function
+    def get_intervals(self, data):
+        
+        """
+        This method divides up the dataset into data intervals of length tau. 
+        """
+        n = len(data)
+
+        indices = np.arange(0, n-self.train_per, self.train_per)
+        start_indices = indices[:, None] + np.arange(0, self.train_per+self.p)
+        data_intervals = data[start_indices]
+        
+        return data_intervals
+        
+
+
+    def get_sma(self, data):
+
+        ok = ~np.isnan(data)
+        data[~ok] = .0
+        denominators = np.convolve(ok, np.ones(self.q), "valid")
+        #denominators[~(denominators>0)] += 1
+
+        sma = np.convolve(data, np.ones(self.q), "valid")
+        sma /= denominators
+        return sma
+
+
+    def get_phis(self, data):
+
+        acf = [autocovariance(data, lag) / data.std()**2 for lag in self.lags]      # Autocorrelation function
 
         acf.insert(0, 1.)   
         r = [acf[abs(-k+j)] for k in range(self.p) for j in range(self.p)]  # Yule-Walker Estimation with autocorrelation function
@@ -61,27 +93,39 @@ class AR():
         self.phis = phi_hats
 
 
-    def predict(self, test_data):
 
-        buffer = len(self.phis)
-        predictions = [0] * buffer
+    def forecast(self, data):
 
-        for i, _ in enumerate(test_data):                           # Model predictions only 1 time step into the future
-            prediction = sum([x*phi for x, phi in zip(test_data[i:], reversed(self.phis))])
+        data_intervals = self.get_intervals(data)
+        smoothed_data_intervals = self.get_intervals(self.get_sma(data))
+
+        
+        predictions = []
+        self.get_phis(data_intervals[0]) # Pre-training
+
+        for i, x in enumerate(smoothed_data_intervals[1:], start=1):
+            prediction = np.convolve(x[:-1], self.phis, "valid")
             predictions.append(prediction)
-        predictions = np.array(predictions[buffer:2*-buffer])       # predictions shape and test_data shape not equal
+            self.get_phis(data_intervals[i])
 
-        return predictions
+        return data_intervals,  np.array(predictions)
     
-    def calculate_error(self, predictions, test_data):
-        hypotheses = {}
-        hypotheses.update({f"AR({self.p})": [(x-x_pred)**2 for x, x_pred in zip(predictions, test_data)]})         # Squared losses
-        hypotheses = dict(map(lambda x: (x[0] ,np.mean(x[1])), hypotheses.items()))         # squared errors --> mean squared errors (mse)
 
-        return hypotheses
+
+    def get_integrals(self, predictions, data_intervals):
+
+        stds = data_intervals[:-1].std(axis=1)
+        white_noise = rng.normal(size=data_intervals[:-1, self.p:].shape, scale=(stds**2)[:, None])
+        predictions += white_noise 
+
+        z = (self.gust_th - predictions) / ((2*stds**2)**0.5)[:, None]
+        prediction_integrals = 0.5 * (1 - special.erf(z))
+        
+        return prediction_integrals.flatten()
+
     
     def get_performances(self, predictions, test_data):
-
+        
         buffer = len(self.phis)
         test_data = np.array(test_data[buffer:-buffer])
 
@@ -108,40 +152,94 @@ class AR():
             performances.update({threshold: accuracies})
 
         return performances
+    
 
-def roc_plot(performances, colorname, p):
+    def get_performances2(self, prediction_integral, data_intervals):
+    
+        steps = np.linspace(0, 40 ,20)[::-1]
+        quantiles = 1/np.exp(steps)        
+        performances2 = dict.fromkeys(quantiles)
 
-    _ = plt.figure(1, figsize=(5,5))
-    colors = sns.color_palette(colorname, len(performances))
+        wind_gusts = np.where(data_intervals[1:, self.p:].flatten() >= self.gust_th, 3, 0) # G(t)
+        n_gusts = np.where(wind_gusts == 3, 1, 0).sum()
 
-    i = 0
-    for threshold, (true_positive_rate, false_positive_rate) in performances.items():
-        plt.plot(false_positive_rate, true_positive_rate, "o", label=f"{threshold:.2f}", color=colors[i])
-        i += 1
-    plt.plot(np.arange(2), linestyle="--", color='#0f0f0f30')
+        for quantile in quantiles:
+
+            wind_gusts_pred = np.where(prediction_integral >= quantile, 1, 0) 
+
+            true_positive = np.where(wind_gusts_pred + wind_gusts == 4, 1, 0)
+            false_positive = np.where(wind_gusts_pred + wind_gusts == 1, 1, 0)
+            
+            true_positive_rate = true_positive.sum() / n_gusts
+            false_positive_rate = false_positive.sum() / (len(wind_gusts) - n_gusts)
+
+            performances2[quantile] = (true_positive_rate, false_positive_rate)
+
+        return performances2, quantiles
+        
+
+    def roc_plot(self, performances, colorname, p):
+
+        _ = plt.figure(1, figsize=(5,5))
+        colors = sns.color_palette(colorname, len(performances))
+
+        i = 0
+        for threshold, (true_positive_rate, false_positive_rate) in performances.items():
+            plt.plot(false_positive_rate, true_positive_rate, "o", label=f"{threshold:.2f}", color=colors[i])
+            i += 1
+        plt.plot(np.arange(2), linestyle="--", color='#0f0f0f30')
 
 
-    plt.grid(linewidth=0.4, alpha=0.8)
-    plt.xlim(0,1)
-    plt.ylim(0,1)
+        plt.grid(linewidth=0.4, alpha=0.8)
+        plt.xlim(0,1)
+        plt.ylim(0,1)
 
-    plt.minorticks_on()
-    plt.tick_params(direction="in", which="major", length=7, bottom=True, top=True, right=True)
-    plt.tick_params(direction="in", which="minor", length=2.5, bottom=True, top=True, right=True)
-    plt.xlabel("False positive rate", fontsize=14)
-    plt.ylabel("True positive rate", fontsize=14)
+        plt.minorticks_on()
+        plt.tick_params(direction="in", which="major", length=7, bottom=True, top=True, right=True)
+        plt.tick_params(direction="in", which="minor", length=2.5, bottom=True, top=True, right=True)
+        plt.xlabel("False positive rate", fontsize=14)
+        plt.ylabel("True positive rate", fontsize=14)
 
-    plt.title(f"$AR({p})$", fontsize=14)
-    plt.suptitle("Receiver-operating-characteristic", fontsize=16)
-    plt.legend(title="Threshold (m/s)", fontsize=10, bbox_to_anchor=(1.02,1.1))
+        plt.title(f"$AR({p})$", fontsize=14)
+        plt.suptitle("Receiver-operating-characteristic", fontsize=16)
+        plt.legend(title="Threshold (m/s)", fontsize=10, bbox_to_anchor=(1.02,1.1))
 
-    #plt.savefig(os.path.join(PLOTS_PATH, f"{dname}-AR_overview.png"), format="png", dpi=300, bbox_inches="tight")
+        #plt.savefig(os.path.join(PLOTS_PATH, f"{dname}-AR_overview.png"), format="png", dpi=300, bbox_inches="tight")
 
-ar_2 = AR(2)
 
-ar_2.get_phis(train_data)
-predictions = ar_2.predict(test_data)
-performances = ar_2.get_performances(predictions, test_data)
 
-color_palette = ["rocket_r", "dark:salmon_r", "dark:b_r", "dark:seagreen_r"]
-roc_plot(performances, color_palette[0], 2)
+    def roc2(self, performances, quantiles):
+        colors = sns.color_palette("rocket_r", len(performances))
+        _ = plt.figure(1, figsize=(5,5))
+
+        i = 0
+        for threshold, (true_positive_rate, false_positive_rate) in performances.items():
+            plt.plot(false_positive_rate, true_positive_rate, "o", label=f"{quantiles[i]*100}%", color=colors[i])
+            i += 1
+        plt.plot(np.arange(2), linestyle="--", color='#0f0f0f30')
+
+
+        plt.grid(linewidth=0.4, alpha=0.8)
+        plt.xlim(0,1)
+        plt.ylim(0,1)
+
+        plt.minorticks_on()
+        plt.tick_params(direction="in", which="major", length=7, bottom=True, top=True, right=True)
+        plt.tick_params(direction="in", which="minor", length=2.5, bottom=True, top=True, right=True)
+        plt.xlabel("False positive rate", fontsize=14)
+        plt.ylabel("True positive rate", fontsize=14)
+
+        plt.suptitle("Integral method", fontsize=16)
+        plt.title(f"$ARMA({self.p},{self.q})$" + r"$\tau$" + f"={self.train_per}")
+        plt.legend(title="Exceeding probability", fontsize=10, bbox_to_anchor=(1.02,1.1))
+
+        plt.savefig(os.path.join(PLOTS_PATH, f"{dname}-training_period={self.train_per}-p={self.p}-q={self.q}.png"), format="png", dpi=300, bbox_inches="tight")
+        plt.close()
+
+for i in range(1, 10):
+    arma = ARMA(p=i, q=2, train_per=2000, gust_th=1.6)
+    data_intervals, predictions = arma.forecast(dataset)
+    prediction_integrals = arma.get_integrals(predictions, data_intervals)
+    performances2, quantiles = arma.get_performances2(prediction_integrals, data_intervals)
+    arma.roc2(performances2, quantiles)
+
