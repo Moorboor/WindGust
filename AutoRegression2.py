@@ -3,6 +3,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import os
 from scipy import special
+from tqdm import tqdm
 rng = np.random.default_rng(11)
 
 
@@ -41,15 +42,17 @@ test_data = dataset[-test_set_size:]
 
 class ARMA():
 
-    def __init__(self, *, p, q, train_per, gust_th=1.6):
+    def __init__(self, *, p, q, train_per, gust_th=1.6, sma_train=False):
 
         self.p = p
         self.q = q
         self.train_per = train_per
         self.gust_th = gust_th
-        
+        self.sma_train = sma_train
+
         self.lags = range(1,p+1)
         self.phis = None
+
 
 
     def get_intervals(self, data):
@@ -101,12 +104,14 @@ class ARMA():
 
         
         predictions = []
-        self.get_phis(data_intervals[0]) # Pre-training
 
-        for i, x in enumerate(smoothed_data_intervals[1:], start=1):
+        self.get_phis(smoothed_data_intervals[0]) if self.sma_train else self.get_phis(data_intervals[0])
+
+        for i, x in enumerate(tqdm(smoothed_data_intervals[1:]), start=1):
             prediction = np.convolve(x[:-1], self.phis, "valid")
             predictions.append(prediction)
-            self.get_phis(data_intervals[i])
+
+            self.get_phis(smoothed_data_intervals[i]) if self.sma_train else self.get_phis(data_intervals[i])
 
         return data_intervals,  np.array(predictions)
     
@@ -233,11 +238,14 @@ class ARMA():
         plt.title(f"$ARMA({self.p},{self.q})$" + r"$\tau$" + f"={self.train_per}")
         plt.legend(title="Exceeding probability", fontsize=10, bbox_to_anchor=(1.02,1.1))
 
-        plt.savefig(os.path.join(PLOTS_PATH, f"{dname}-training_period={self.train_per}-p={self.p}-q={self.q}.png"), format="png", dpi=300, bbox_inches="tight")
+        plt.savefig(os.path.join(PLOTS_PATH, f"{dname}-training_period={self.train_per}-p={self.p}-q={self.q}-sma_train={self.sma_train}.png"), format="png", dpi=300, bbox_inches="tight")
         plt.close()
 
-for i in range(1, 10):
-    arma = ARMA(p=i, q=2, train_per=2000, gust_th=1.6)
+
+training_pers = [20]#, 60, 120, 600, 3600]
+
+for t in training_pers:
+    arma = ARMA(p=6, q=3, train_per=t, gust_th=1.6, sma_train=False)
     data_intervals, predictions = arma.forecast(dataset)
     prediction_integrals = arma.get_integrals(predictions, data_intervals)
     performances2, quantiles = arma.get_performances2(prediction_integrals, data_intervals)
