@@ -1,72 +1,83 @@
-import numpy as np
-import seaborn as sns
-import matplotlib.pyplot as plt
 import os
+
+import numpy as np
 from scipy import special
+import pandas as pd
+
 from tqdm import tqdm
 rng = np.random.default_rng(11)
+
 
 
 
 DIRNAME = os.path.abspath("")
 PLOTS_PATH = os.path.join(DIRNAME, "Plots")
 DATA_DIR = os.path.join(os.path.dirname(DIRNAME), "FINO1Data")
+ARRAY_PATH = os.path.join(DIRNAME, "Arrays")
 
+os.makedirs(ARRAY_PATH, exist_ok=True)
 os.makedirs(PLOTS_PATH, exist_ok=True)
 datasets = {path.replace(".npy", ""): np.load(os.path.join(DATA_DIR, path), allow_pickle=True) for path in os.listdir(DATA_DIR) if path.endswith("npy")}
 
 
-def lerp(data):
-    ok = ~np.isnan(data)
-    xp = ok.nonzero()[0]
-    fp = data[ok]
-    x = np.isnan(data).nonzero()[0]
-    data[~ok] = np.interp(x, xp, fp)
-    return data
 
-
-
-datasets = {key: lerp(value) for key, value in datasets.items()}                    # linear interpolation
 datasets = {key: dataset[1:] - dataset[:-1] for key, dataset in datasets.items()}   # Differentiation to make data stationary
-dname = "2015-2017_90m"                                                             # Active dataset
+dname = "2015-2017_100m"                                                             # Active dataset
 dataset = datasets[dname]
-
 
 
 
 class AR():
 
-    def __init__(self, *, p, train_per):
+    def __init__(self, *, p, train_per, gust_th=1.6, beta=1):
 
         self.p = p
         self.train_per = train_per
-
-
-    def get_stds(self, *, data):
-
-        indices = np.arange(0, len(data)-self.train_per)
-        indices_split = np.array_split(indices, 1000)
-
-        stds = []
-        for x in indices_split:
-            x = x[:, None] + np.arange(self.train_per)
-            stds.append(data[x].std(axis=1))
+        self.gust_th = gust_th ** beta
         
-        stds = np.concatenate(stds)
-        stds [~(stds > 1e-08)] += 1e-08
 
-        return stds[:-self.p]
+    def get_rolling(self, *, data, mode):
+
+        indices = np.arange(0, len(data)-self.train_per+1)
+        splits = int(len(data) / 20000)+1
+        indices_split = np.array_split(indices, splits)
+
+        rolling = []
+
+        for indices in tqdm(indices_split):
+            indices = indices[:, None] + np.arange(self.train_per)
+            x = data[indices]
+
+            if mode == "std":
+                split_rolling = x.std(axis=1)
+            elif mode == "mean":
+                split_rolling = x.mean(axis=1)
+
+            nan_pos = np.isnan(split_rolling)
+            if nan_pos.sum() != 0: 
+                if mode == "std":
+                    nan_rolling = np.apply_along_axis((lambda data: data[~np.isnan(data)].std() if np.isnan(data).sum()>0 else 0), 1, arr=x[nan_pos, :])
+                elif mode == "mean":
+                    nan_rolling = np.apply_along_axis((lambda data: data[~np.isnan(data)].mean() if np.isnan(data).sum()>0 else 0), 1, arr=x[nan_pos, :])
+
+                split_rolling = np.nan_to_num(split_rolling, copy=False, nan=0.0)
+                split_rolling[nan_pos] += nan_rolling
+                
+            rolling.append(split_rolling)
+            
+        return np.concatenate(rolling)
+
     
     def get_phis(self, *, data, stds):
         
         # TODO Implement substract mean
         #means = np.convolve(data, np.ones(train_per), "valid") / train_per
         #data = data[train_per: -train_per] - means
-    
-        z = [np.array(data[lag:] * data[:-lag])[:lag-(self.p+1)] for lag in range(1, self.p+1)]
 
-        acfs = [(np.convolve(z[lag], np.ones(self.train_per-(lag+1)), "valid") / (self.train_per-(lag+1)))[:-(lag+1)] for lag in range(self.p)]
-        acfs = [acf / (stds ** 2) for acf in acfs]
+        z = [np.array(data[lag:] * data[:-lag])[:lag-self.p-1] for lag in range(1, self.p+1)]
+
+        acfs = [self.get_rolling(data=z[lag], mode="mean") for lag in range(self.p)]
+        acfs = [acf / (stds[self.p:-1] ** 2) for acf in acfs]
 
         acfs.insert(0, np.ones_like(acfs[0]))
         acfs = np.stack(acfs)
@@ -75,12 +86,10 @@ class AR():
         matrices = acfs[matrix_mask, :].reshape(self.p,self.p,-1).T
         
         det_mask = np.linalg.det(matrices)
-        zero_det = np.where(det_mask < 1e-8, True, False)
-        matrices[zero_det, 0] += 1e-8   
-        
+        matrices[det_mask==0] += np.eye(self.p) * 1e-4
         phis = np.linalg.solve(matrices, acfs[1:].T)
 
-        return phis
+        return np.array(phis)
     
 
     def forecast(self, *, data, phis, stds):
@@ -88,18 +97,18 @@ class AR():
         indices = np.arange(self.train_per-1, len(data))[:, None] - np.arange(self.p)
         x = data[indices]
 
-        predictions = x[:-(self.p+1)] * phis
+        predictions = x[p:-1] * phis
         predictions = predictions.sum(axis=1)
 
-        white_noise = rng.normal(scale=(stds**2))
+        white_noise = rng.normal(scale=(stds[self.p:-1]**2))
         predictions += white_noise
 
         return predictions
     
 
-    def get_integrals(self, *, predictions, stds, gust_th):
-
-        z = (gust_th - predictions) / ((2*stds**2)**0.5)
+    def get_integrals(self, *, predictions, stds):
+        
+        z = (self.gust_th - predictions) / ((2*stds[self.p:-1]**2)**0.5)
         prediction_integrals = 0.5 * (1 - special.erf(z))
         
         return prediction_integrals
@@ -108,14 +117,14 @@ class AR():
 
 def get_performances(*, data, prediction_integral, p, train_per, gust_th):
 
-    steps = np.linspace(0, 40 ,20)[::-1]
-    quantiles = 1 / np.exp(steps)        
+
+    quantiles = np.append([0], 10**np.arange(-9, (1.1), 0.1))
     performances = dict.fromkeys(quantiles)
 
-    wind_gusts = np.where(data[train_per:-p] >= gust_th, 3, 0) # G(t)
-    n_gusts = (wind_gusts / 3).sum()
-
-    for quantile in quantiles:
+    wind_nans = np.isnan(data[train_per+p:])
+    wind_gusts = np.where(data[train_per+p:] >= gust_th, 3, 0) # G(t)
+    n_gusts = wind_gusts.sum() / 3
+    for quantile in tqdm(quantiles):
 
         wind_gusts_pred = np.where(prediction_integral >= quantile, 1, 0) 
 
@@ -123,59 +132,82 @@ def get_performances(*, data, prediction_integral, p, train_per, gust_th):
         false_positive = np.where(wind_gusts_pred + wind_gusts == 1, 1, 0)
         
         true_positive_rate = true_positive.sum() / n_gusts
-        false_positive_rate = false_positive.sum() / (len(wind_gusts) - n_gusts)
+        false_positive_rate = false_positive[~wind_nans].sum() / (len(wind_gusts) - n_gusts - wind_nans.sum())
 
         performances[quantile] = (true_positive_rate, false_positive_rate)
 
     return performances
 
 
+def get_xi(*, performances):
+    
+    base_1 = np.array([.5,-.5])
+    base_2 = np.array([.5, .5])
 
-def plot_roc(*, performances, p, train_per, gust_th):
+    points = dict()
 
-    colors = sns.color_palette("rocket_r", len(performances))
-    _ = plt.figure(1, figsize=(5,5))
+    for key, (y,x) in performances.items():
+        point = x * base_1 + y * base_2
+        points[key] = point
 
-    i = 0
-    for threshold, (true_positive_rate, false_positive_rate) in performances.items():
-        plt.plot(false_positive_rate, true_positive_rate, "o", label=f"{(threshold*100):.4f}%", color=colors[i])
-        i += 1
+    key = sorted(points.items(), key=lambda item:item[1][1])[-1][0]
+    xi = np.array([[x,y] for key, (x,y) in points.items()])
 
-    plt.plot(np.arange(2), linestyle="--", color='#0f0f0f30')
+    return np.max(xi[:, 1])
 
+def save_performances(*, performances, p, train_per, gust_th, xi, beta):
+    """
+    This is my first doc string! 
+    """
+    quantiles = []
+    true_positive_rates = []
+    false_negative_rates = []
 
-    plt.grid(linewidth=0.4, alpha=0.8)
-    plt.xlim(0,1)
-    plt.ylim(0,1)
+    for quantile, (true_positive_rate, false_negative_rate) in performances.items():
+        quantiles.append(quantile)
+        true_positive_rates.append(true_positive_rate)
+        false_negative_rates.append(false_negative_rate)
 
-    plt.minorticks_on()
-    plt.tick_params(direction="in", which="major", length=7, bottom=True, top=True, right=True)
-    plt.tick_params(direction="in", which="minor", length=2.5, bottom=True, top=True, right=True)
-    plt.xlabel("False positive rate", fontsize=14)
-    plt.ylabel("True positive rate", fontsize=14)
-
-    #plt.suptitle("Integral method", fontsize=16)
-    plt.title(f"$AR({p})$, " + r"$\tau$" + f"={train_per}")
-    plt.legend(title="Exceeding probability", fontsize=10, bbox_to_anchor=(1.02,1.1))
-
-    plt.savefig(os.path.join(PLOTS_PATH, f"{dname}-p={p}-training_per={train_per}-gust_th={gust_th}.png"), format="png", dpi=300, bbox_inches="tight")
-    plt.close()
+    data = list(zip(quantiles, true_positive_rates, false_negative_rates))
+    df = pd.DataFrame(data, columns=["quantiles", "true_positive_rate", "false_negative_rate"])
+    return df.to_csv(os.path.join(ARRAY_PATH, f"{dname}-p={p}-training_per={train_per}-gust_th={gust_th}-beta={beta}-xi={xi:.4f}.csv"))
 
 
-training_pers = [90, 120, 150]
-p_parameters = [4,5,6,7,8,9,10]
-gust_th = 1.6
 
-for p in p_parameters:
-    for train_per in tqdm(training_pers):
 
-        ar = AR(p=p, train_per=train_per)
+gust_ths = [1.5]
+train_pers = np.unique(np.round(10**np.linspace(np.log10(10), np.log10(60*60), 100))).astype(int)
+train_pers = train_pers[1:3]
+p_parameters = [3,4]
+betas = [0.644, 1]
 
-        stds = ar.get_stds(data=dataset)
-        phis = ar.get_phis(data=dataset, stds=stds)
-        predictions = ar.forecast(data=dataset, phis=phis, stds=stds)
-        prediction_integrals = ar.get_integrals(predictions=predictions, stds=stds, gust_th=gust_th)
 
-        performances = get_performances(data=dataset, prediction_integral=prediction_integrals, p=p, train_per=train_per, gust_th=gust_th)
-        plot_roc(performances=performances, p=p, train_per=train_per, gust_th=gust_th)    
+ar = AR(p=None, train_per=None, gust_th=1, beta=1)
 
+for gust_th in gust_ths:
+    ar.gust_th = gust_th
+    for beta in betas:
+        dataset_gauss = np.sign(dataset) * np.abs(dataset)**beta
+        ar.beta = beta
+
+        for train_per in train_pers:
+            ar.train_per = train_per
+
+            print(f"Getting rolling standard deviations tau=({train_per}): ")
+            stds = ar.get_rolling(data=dataset, mode="std")
+
+            for p in tqdm(p_parameters):
+
+                ar.p = p 
+                print(f"\nGetting AR({p}) phi parameters: ")
+                phis = ar.get_phis(data=dataset, stds=stds)
+
+                predictions = ar.forecast(data=dataset_gauss, phis=phis, stds=stds)
+                prediction_integrals = ar.get_integrals(predictions=predictions, stds=stds)
+
+                performances = get_performances(data=dataset, prediction_integral=prediction_integrals, p=p, train_per=train_per, gust_th=gust_th)
+                xi = get_xi(performances=performances)
+
+                
+                save_performances(performances=performances, p=p,train_per=train_per, gust_th=gust_th, xi=xi, beta=beta)
+                
