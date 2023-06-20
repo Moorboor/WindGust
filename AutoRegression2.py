@@ -35,6 +35,7 @@ class AR():
         self.p = p
         self.train_per = train_per
         self.gust_th = gust_th ** beta
+        self.beta = beta
         
 
     def get_rolling(self, *, data, mode, show):
@@ -73,9 +74,8 @@ class AR():
         acfs = [np.divide(acf, var, out=np.zeros_like(acf), where=var!=0) for acf in acfs]
         acfs.insert(0, np.ones_like(acfs[0]))
         acfs = np.stack(acfs)
-
         matrix_mask = np.array([abs(-k+j) for k in range(self.p) for j in range(self.p)])
-        splits = max(int(len(acfs[0]) / 60000000), 1)
+        splits = max(int(len(acfs[0]) / 200000), 1)
         phis = [get_yule_walker(acfs=acfs_split) for acfs_split in np.array_split(acfs, splits, axis=1)]
 
         return np.concatenate(phis)
@@ -97,25 +97,24 @@ class AR():
         
         z = (self.gust_th - predictions) / (2*var)**0.5
         predictions = 0.5 * (1 - special.erf(z))
-        return predictions#np.where(var==0, 0, predictions)
+        return np.where(var==0, 0, predictions)
 
 
 def data_chunks(*, ar, data, var):
 
-    chunk_size = 60000000
+    chunk_size = 1000000
     n_chunks = max(int(len(data)/chunk_size), 1)
-    data_indices = np.arange(len(data)-ar.train_per-ar.p) 
-    var_indices = np.arange(ar.p, len(var)) 
-    data_indices_splits = np.array_split(data_indices, n_chunks)
-    var_indices_splits = np.array_split(var_indices, n_chunks)
-
-    data_indices_splits = [np.append(indices_split, indices_split[-1] + np.arange(1, ar.train_per+ar.p+1)) for indices_split in data_indices_splits]
+    indices = np.arange(len(data)) # t-1
+    indices_splits = np.array_split(indices, n_chunks)   
+    var_indices_splits = indices_splits.copy()
+    var_indices_splits[-1] = var_indices_splits[-1][:-ar.train_per-ar.p+1]
+    indices_splits[:-1] = [np.append(indices_split, indices_split[-1] + np.arange(1, ar.train_per+ar.p)) for indices_split in indices_splits[:-1]]
     predictions = []
-    for data_indices_chunk, var_indices_chunk in tqdm(zip(data_indices_splits, var_indices_splits), total=len(data_indices_splits)):
-        data_chunk = data[data_indices_chunk]
-        var_chunk = var[var_indices_chunk]
-
+    for indices_split, var_indices_split in tqdm(zip(indices_splits, var_indices_splits), total=len(indices_splits)):
+        data_chunk = data[indices_split]
+        var_chunk = var[var_indices_split]
         phis = ar.get_phis(data=data_chunk, var=var_chunk)
+
         prediction = ar.forecast(data=data_chunk, phis=phis, var=var_chunk)
         predictions.append(ar.get_integrals(predictions=prediction, var=var_chunk)) 
         
@@ -185,6 +184,7 @@ def save_performances(*, performances, p, train_per, gust_th, xi, beta):
 
 gust_ths = [1.5]
 train_pers = np.unique(np.round(10**np.linspace(np.log10(10), np.log10(60*60), 100))).astype(int)
+#train_pers = [11]
 p_parameters = [2]
 betas = [1] # 0.644
 
@@ -193,31 +193,29 @@ i = 0
 
 
 
-ar = AR(p=None, train_per=None, gust_th=1, beta=1)
-
-
 for beta in betas:
     dataset_gauss = np.sign(dataset) * np.abs(dataset)**beta
-    ar.beta = beta
 
     for train_per in train_pers:
+        ar = AR(p=None, train_per=None, gust_th=1, beta=1)
+        ar.beta = beta
         ar.train_per = train_per
-        print(f"Getting rolling variances tau=({train_per}): ")
+        print(f"Getting rolling variances tau=({ar.train_per}): ")
         var = ar.get_rolling(data=dataset_gauss[:-1], mode="var", show=True)
 
-        for p in tqdm(p_parameters):
+        for p in p_parameters:
             ar.p = p 
-            predictions = data_chunks(ar=ar, data=dataset_gauss[:-1], var=var)
+            predictions = data_chunks(ar=ar, data=dataset_gauss[:-1], var=var[ar.p:])
 
             for gust_th in gust_ths:
-                start = time.time()
-                i += 1
-                print(f"\n({i}/{n}): Getting AR({p}) predictions")
                 ar.gust_th = gust_th
-                performances = get_performances(data=dataset, predictions=predictions, p=p, train_per=train_per, gust_th=gust_th)
+                
+                i += 1
+                start = time.time()
+                print(f"\n({i}/{n}): Getting AR({ar.p}) {vars(ar)} performances:")
+                performances = get_performances(data=dataset, predictions=predictions, p=ar.p, train_per=ar.train_per, gust_th=ar.gust_th)
                 xi = get_xi(performances=performances)
-            
-                save_performances(performances=performances, p=p,train_per=train_per, gust_th=gust_th, xi=xi, beta=beta)
-
+                save_performances(performances=performances, p=ar.p, train_per=ar.train_per, gust_th=ar.gust_th, xi=xi, beta=ar.beta)
                 end = time.time()
-                print(f"AR({p}), tau={train_per}, {np.round(end-start, 1)} secs.")
+
+                print(f"AR({ar.p}), {vars(ar)}, took {np.round(end-start, 1)} secs.")
