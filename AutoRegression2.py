@@ -184,12 +184,13 @@ def save_performances(*, performances, p, train_per, gust_th, xi, beta):
 
 gust_ths = [1.5]
 train_pers = np.unique(np.round(10**np.linspace(np.log10(10), np.log10(60*60), 100))).astype(int)
-#train_pers = [11]
+train_pers = train_pers[30:]
 p_parameters = [2]
 betas = [1] # 0.644
 
 n = len(gust_ths) * len(train_pers) * len(p_parameters) * len(betas)
 i = 0
+
 
 
 
@@ -212,7 +213,7 @@ for beta in betas:
                 
                 i += 1
                 start = time.time()
-                print(f"\n({i}/{n}): Getting AR({ar.p}) {vars(ar)} performances:")
+                print(f"\n({i}/{n}): Getting AR({vars(ar)}) performances:")
                 performances = get_performances(data=dataset, predictions=predictions, p=ar.p, train_per=ar.train_per, gust_th=ar.gust_th)
                 xi = get_xi(performances=performances)
                 save_performances(performances=performances, p=ar.p, train_per=ar.train_per, gust_th=ar.gust_th, xi=xi, beta=ar.beta)
