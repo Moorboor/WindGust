@@ -1,14 +1,13 @@
 import os
-
+import sys
 import numpy as np
-from scipy import special
-
-import pandas as pd
+from scipy import special, integrate
 from tqdm import tqdm
 import time
 
 rng = np.random.default_rng(11)
 
+p_parameters = [int(sys.argv[1])]
 
 
 DIRNAME = os.path.abspath("")
@@ -64,7 +63,7 @@ class AR():
         def get_yule_walker(*, acfs):
             matrices = acfs[matrix_mask, :].reshape(self.p,self.p,-1).T
             det_mask = np.linalg.det(matrices)
-            matrices[det_mask==0] += np.eye(self.p) * 1e-4
+            matrices[det_mask<1e-6] = rng.normal(size=matrices[0].shape)*0.001
             return np.linalg.solve(matrices, acfs[1:].T)
         
         # TODO Implement substract mean Steinerscher Verschiebungssatz
@@ -75,7 +74,7 @@ class AR():
         acfs.insert(0, np.ones_like(acfs[0]))
         acfs = np.stack(acfs)
         matrix_mask = np.array([abs(-k+j) for k in range(self.p) for j in range(self.p)])
-        splits = max(int(len(acfs[0]) / 200000), 1)
+        splits = max(int(len(acfs[0]) / 2000), 1)
         phis = [get_yule_walker(acfs=acfs_split) for acfs_split in np.array_split(acfs, splits, axis=1)]
 
         return np.concatenate(phis)
@@ -124,26 +123,24 @@ def data_chunks(*, ar, data, var):
 def get_performances(*, data, predictions, p, train_per, gust_th):
 
 
-    quantiles = np.append([0], 10**np.arange(-9, (1.1), 0.1))
-    performances = dict.fromkeys(quantiles)
+    quantiles = np.append([0], 10**np.arange(-9, 0.1, 0.1))
+    # performances = dict.fromkeys(quantiles)
 
     wind_nans = np.isnan(data[train_per+p:])
-    wind_gusts = np.where(data[train_per+p:] >= gust_th, 3, 0) # G(t)
-    n_gusts = wind_gusts.sum() / 3
+    wind_gusts = np.where(data[train_per+p:] >= gust_th, True, False) # G(t)
+    
+    wind_gusts[wind_nans]          = np.nan 
+    predictions_nanidx             = np.where(np.isnan(predictions))
+    wind_nans_idx                  = np.where(wind_nans)
 
-    for quantile in tqdm(quantiles):
+    all_nan_idx = np.unique(np.append(wind_nans_idx, predictions_nanidx))
+    predictions = np.delete(predictions, all_nan_idx)
+    wind_gusts = np.delete(wind_gusts, all_nan_idx)
 
-        wind_gusts_pred = np.where(predictions >= quantile, 1, 0) 
 
-        true_positive = np.where(wind_gusts_pred + wind_gusts == 4, 1, 0)
-        false_positive = np.where(wind_gusts_pred + wind_gusts == 1, 1, 0)
-        
-        true_positive_rate = true_positive.sum() / n_gusts
-        false_positive_rate = false_positive[~wind_nans].sum() / (len(wind_gusts) - n_gusts - wind_nans.sum())
-
-        performances[quantile] = (true_positive_rate, false_positive_rate)
-
-    return performances
+    tpr, fpr, prob_threshold, distances, auc = ROC(gustprob=predictions, prob_threshold=quantiles, isgustbool=wind_gusts, printing=False)
+    
+    return tpr, fpr, prob_threshold, distances, auc
 
 def get_xi(*, performances):
     
@@ -161,36 +158,75 @@ def get_xi(*, performances):
 
     return np.max(xi[:, 1])
 
-def save_performances(*, performances, p, train_per, gust_th, xi, beta):
+
+
+
+def save_performances(*, ar, tpr, fpr, prob_threshold, distances, auc):
     """
     This is my first doc string! 
     """
-    quantiles = []
-    true_positive_rates = []
-    false_negative_rates = []
-
-    for quantile, (true_positive_rate, false_negative_rate) in performances.items():
-        quantiles.append(quantile)
-        true_positive_rates.append(true_positive_rate)
-        false_negative_rates.append(false_negative_rate)
-
-    data = list(zip(quantiles, true_positive_rates, false_negative_rates))
-    df = pd.DataFrame(data, columns=["quantiles", "true_positive_rate", "false_negative_rate"])
-    PERFORMANCE_PATH = os.path.join(ARRAY_PATH, f"{dname}", f"AutoRegression2", f"AR({p})", f"GustTh={gust_th}", f"Beta={beta}")
+    PERFORMANCE_PATH = os.path.join(ARRAY_PATH, f"{dname}", f"AutoRegression2", f"AR({ar.p})", f"GustTh={ar.gust_th}", f"Beta={ar.beta}")
     os.makedirs(PERFORMANCE_PATH, exist_ok=True)
+    ROCsave = np.column_stack([tpr, fpr]) 
+    np.savetxt(os.path.join(PERFORMANCE_PATH, f"{dname}-p={ar.p}-training_per={ar.train_per}-gust_th={ar.gust_th}-beta={ar.beta}.dat"), ROCsave)
 
-    return df.to_csv(os.path.join(PERFORMANCE_PATH, f"{dname}-p={p}-training_per={train_per}-gust_th={gust_th}-beta={beta}-xi={xi:.4f}.csv"))
+    return
 
 
 gust_ths = [1.5]
-train_pers = np.unique(np.round(10**np.linspace(np.log10(10), np.log10(60*60), 100))).astype(int)
-train_pers = train_pers[30:]
-p_parameters = [2]
+# train_pers = np.unique(np.round(10**np.linspace(np.log10(10), np.log10(60*60), 100))).astype(int)
+train_pers = np.unique(np.round(10**np.linspace(np.log10(5), np.log10(10*24*60*60), 200))).astype(int)
+# p_parameters = [1,2,3,4]
 betas = [1] # 0.644
 
 n = len(gust_ths) * len(train_pers) * len(p_parameters) * len(betas)
 i = 0
 
+
+
+def distanceNorm(x, y):  # normiert auf 1
+    d       = (y - x)
+    return d 
+
+
+def ROC(gustprob, prob_threshold, isgustbool, printing=True):
+### iterate through all discrimination thresholds (probability thresholds)
+    tpr          = np.zeros(len(prob_threshold), dtype=float)   # initialize array for sensitivity [same as true positive rate (TPR)]; number of elements equal to number of discrimination thresholds
+    fpr          = np.zeros(len(prob_threshold), dtype=float)   # and for specifity [false positive rate (FPR) = 1 - specifity]
+    for ithreshold in range(len(prob_threshold)):
+    ### Indices of gust alarms: Where do the gust probabilities "gustprob" exceed the probability threshold "prob_threshold"?
+        alert_idx                  = np.ravel(np.where(gustprob >= prob_threshold[ithreshold]))
+    ### Create boolean array with true, if gust alarm
+        predictionalert            = np.array(np.zeros(len(isgustbool)), dtype=bool)     
+        predictionalert[alert_idx] = True 
+    ### Indices, where no gust alarm is
+        nonalert_idx               = np.ravel(np.where(~predictionalert))
+    ### Calculate the number of true positives (there is a gust, and also a gust is predicted)
+        right_alert                = np.count_nonzero(isgustbool[alert_idx])  # count the number of true positives
+    ### Calculate the number of true negatives (there is no gust, and no gust has been predicted)
+        right_nonalert             = np.count_nonzero(~isgustbool[nonalert_idx])
+    ### Total number of all gust events in "dv" ("gustpositive") and of no-gust-events ("gustnegative")
+        gustpositive               = np.count_nonzero(isgustbool) 
+        gustnegative               = np.count_nonzero(~isgustbool)
+        tpr[ithreshold]    = right_alert/gustpositive            # TPR = True positive rate  = TP/P     =     (True positive)/(Total gust number)
+        fpr[ithreshold]    = 1 - right_nonalert/gustnegative     # FPR = False positive rate = 1 - TN/N = 1 - (True negative)/(Total not-gust number)
+    # printing is optional of course
+        if printing:
+            print("\nProbability threshold: " + str(prob_threshold[ithreshold]))  
+            print("True positive rate: " +  str(100*np.round(tpr[ithreshold], 2)) + "%")
+            print("False positive rate: " + str(100*np.round(fpr[ithreshold], 2)) + "%")  
+    # Estimate the distance between the linear line and all [TPR, FPR] points in the ROC plot. There are as much [TPR, FPR] points as "prob_threshold" values exist
+    distances            = np.zeros(len(prob_threshold), dtype=float)
+    for idist in range(len(distances)):
+        distances[idist]      = distanceNorm(fpr[idist], tpr[idist])
+    idxmaxdist           = np.ravel(np.where(distances == np.max(distances)))       # find the index of the maximum distance "idxmaxdist" (according to the probability threshold with best predictive power)
+    if printing:
+        print('\nBest probability threshold: ' + str(prob_threshold[idxmaxdist]) + '\n')
+    integy  = np.flip(tpr)
+    integx  = np.flip(fpr)
+    # auc     = 2*integrate.trapezoid(y=integy-integx, x=integx)#[-1]
+    auc     = integrate.trapezoid(y=integy, x=integx)#[-1]
+    return tpr, fpr, prob_threshold[idxmaxdist], distances[idxmaxdist], auc
 
 
 
@@ -214,9 +250,11 @@ for beta in betas:
                 i += 1
                 start = time.time()
                 print(f"\n({i}/{n}): Getting AR({vars(ar)}) performances:")
-                performances = get_performances(data=dataset, predictions=predictions, p=ar.p, train_per=ar.train_per, gust_th=ar.gust_th)
-                xi = get_xi(performances=performances)
-                save_performances(performances=performances, p=ar.p, train_per=ar.train_per, gust_th=ar.gust_th, xi=xi, beta=ar.beta)
+                tpr, fpr, prob_threshold, distances, auc = get_performances(data=dataset, predictions=predictions, p=ar.p, train_per=ar.train_per, gust_th=ar.gust_th)
+                
+                # xi = get_xi(performances=performances)
+                save_performances(ar=ar, tpr=tpr, fpr=fpr, prob_threshold=prob_threshold, distances=distances, auc=auc)
                 end = time.time()
 
                 print(f"AR({ar.p}), {vars(ar)}, took {np.round(end-start, 1)} secs.")
+
