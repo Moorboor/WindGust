@@ -7,8 +7,8 @@ import time
 
 rng = np.random.default_rng(11)
 
-p_parameters = [int(sys.argv[1])]
-
+#p_parameters = [int(sys.argv[1])]
+#train_pers = int(sys.argv[2])
 
 DIRNAME = os.path.abspath("")
 PLOTS_PATH = os.path.join(DIRNAME, "Plots")
@@ -20,8 +20,9 @@ os.makedirs(PLOTS_PATH, exist_ok=True)
 datasets = {path.replace(".npy", ""): np.load(os.path.join(DATA_DIR, path), allow_pickle=True) for path in os.listdir(DATA_DIR) if path.endswith("npy")}
 
 
-
+# Differentiating
 datasets = {key: dataset[1:] - dataset[:-1] for key, dataset in datasets.items()}  
+
 dname = "2015-2017_100m"                                                             
 dataset = datasets[dname]
 
@@ -39,6 +40,7 @@ class AR():
 
     def get_rolling(self, *, data, mode, show):
 
+        # Additional chunking
         indices = np.arange(len(data)-self.train_per+1)
         n_splits = max(int(len(data) / 2000), 1)
         indices_split = np.array_split(indices, n_splits)
@@ -56,10 +58,9 @@ class AR():
             rolling.append(split_rolling)
             
         return np.concatenate(rolling)
-
     
-    def get_phis(self, *, data, var):
-        
+    def get_phis(self, *, data):
+
         def get_yule_walker(*, acfs):
             matrices = acfs[matrix_mask, :].reshape(self.p,self.p,-1).T
             det_mask = np.linalg.det(matrices)
@@ -68,35 +69,34 @@ class AR():
         
         # TODO Implement substract mean Steinerscher Verschiebungssatz
 
-        z = [np.array(data[lag:] * data[:-lag])[:len(data)-self.p] for lag in range(1, self.p+1)]
-        acfs = [self.get_rolling(data=z[lag], mode="mean", show=False) for lag in range(self.p)]
-        acfs = [np.divide(acf, var, out=np.zeros_like(acf), where=var!=0) for acf in acfs]
-        acfs.insert(0, np.ones_like(acfs[0]))
+        z = [np.array(data[lag:] * data[:len(data)-lag])[:len(data)-self.p] for lag in range(0, self.p+1)]
+        mean_gammas = [self.get_rolling(data=gamma, mode="mean", show=False) for gamma in z]
+        acfs = [np.divide(gamma, mean_gammas[0], out=np.zeros_like(gamma), where=mean_gammas[0]!=0) for gamma in mean_gammas]
+
         acfs = np.stack(acfs)
         matrix_mask = np.array([abs(-k+j) for k in range(self.p) for j in range(self.p)])
         splits = max(int(len(acfs[0]) / 2000), 1)
         phis = [get_yule_walker(acfs=acfs_split) for acfs_split in np.array_split(acfs, splits, axis=1)]
 
-        return np.concatenate(phis)
+        return np.concatenate(phis), np.array(mean_gammas)
     
-
-    def forecast(self, *, data, phis, var):
+    def forecast(self, *, data, phis, var_w):
 
         indices = np.arange(self.p+self.train_per-1, len(data))[:, None] - np.arange(self.p)
         predictions = data[indices] * phis
         predictions = predictions.sum(axis=1)
 
-        white_noise = rng.normal(scale=var)
+        white_noise = rng.normal(scale=var_w)
         predictions += white_noise
             
         return predictions
     
 
-    def get_integrals(self, *, predictions, var):
+    def get_integrals(self, *, predictions, var_w):
         
-        z = (self.gust_th - predictions) / (2*var)**0.5
+        z = (self.gust_th - predictions) / (2*var_w)**0.5
         predictions = 0.5 * (1 - special.erf(z))
-        return np.where(var==0, 0, predictions)
+        return np.where(var_w==0, 0, predictions)
 
 
 def data_chunks(*, ar, data, var):
@@ -108,15 +108,22 @@ def data_chunks(*, ar, data, var):
     var_indices_splits = indices_splits.copy()
     var_indices_splits[-1] = var_indices_splits[-1][:-ar.train_per-ar.p+1]
     indices_splits[:-1] = [np.append(indices_split, indices_split[-1] + np.arange(1, ar.train_per+ar.p)) for indices_split in indices_splits[:-1]]
+
     predictions = []
+
     for indices_split, var_indices_split in tqdm(zip(indices_splits, var_indices_splits), total=len(indices_splits)):
         data_chunk = data[indices_split]
         var_chunk = var[var_indices_split]
-        phis = ar.get_phis(data=data_chunk, var=var_chunk)
+        phis, mean_gammas = ar.get_phis(data=data_chunk)
 
-        prediction = ar.forecast(data=data_chunk, phis=phis, var=var_chunk)
-        predictions.append(ar.get_integrals(predictions=prediction, var=var_chunk)) 
+        # course-corrected variance
+
+        var_w_chunk = mean_gammas[0] - (phis * mean_gammas[1:].T).sum(axis=1)
+        var_w_chunk[var_w_chunk<0] = 0.001
         
+        prediction = ar.forecast(data=data_chunk, phis=phis, var_w=var_w_chunk)
+        predictions.append(ar.get_integrals(predictions=prediction, var_w=var_w_chunk)) 
+
     return np.concatenate(predictions)
 
 
@@ -161,26 +168,16 @@ def get_xi(*, performances):
 
 
 
-def save_performances(*, ar, tpr, fpr, prob_threshold, distances, auc):
+def save_performances(*, ar, tpr, fpr, prob_threshold, distances, auc, mode):
     """
     This is my first doc string! 
     """
     PERFORMANCE_PATH = os.path.join(ARRAY_PATH, f"{dname}", f"AutoRegression2", f"AR({ar.p})", f"GustTh={ar.gust_th}", f"Beta={ar.beta}")
     os.makedirs(PERFORMANCE_PATH, exist_ok=True)
     ROCsave = np.column_stack([tpr, fpr]) 
-    np.savetxt(os.path.join(PERFORMANCE_PATH, f"{dname}-p={ar.p}-training_per={ar.train_per}-gust_th={ar.gust_th}-beta={ar.beta}.dat"), ROCsave)
+    np.savetxt(os.path.join(PERFORMANCE_PATH, f"{dname}-p={ar.p}-training_per={ar.train_per}-gust_th={ar.gust_th}-beta={ar.beta}-mode={mode}.dat"), ROCsave)
 
     return
-
-
-gust_ths = [1.5]
-# train_pers = np.unique(np.round(10**np.linspace(np.log10(10), np.log10(60*60), 100))).astype(int)
-train_pers = np.unique(np.round(10**np.linspace(np.log10(5), np.log10(10*24*60*60), 200))).astype(int)
-# p_parameters = [1,2,3,4]
-betas = [1] # 0.644
-
-n = len(gust_ths) * len(train_pers) * len(p_parameters) * len(betas)
-i = 0
 
 
 
@@ -229,6 +226,17 @@ def ROC(gustprob, prob_threshold, isgustbool, printing=True):
     return tpr, fpr, prob_threshold[idxmaxdist], distances[idxmaxdist], auc
 
 
+#----------------------------------------------------------------------------------------------------------------#
+
+gust_ths = [1,1.5,2]
+train_pers = np.unique(np.round(10**np.linspace(np.log10(5), np.log10(10*24*60*60), 200))).astype(int)
+train_pers = [9,16,60,120,308]
+p_parameters = [1,2,4,10]
+betas = [1] # 0.644
+
+
+n = len(gust_ths) * len(train_pers) * len(p_parameters) * len(betas)
+i = 0
 
 for beta in betas:
     dataset_gauss = np.sign(dataset) * np.abs(dataset)**beta
@@ -237,6 +245,7 @@ for beta in betas:
         ar = AR(p=None, train_per=None, gust_th=1, beta=1)
         ar.beta = beta
         ar.train_per = train_per
+
         print(f"Getting rolling variances tau=({ar.train_per}): ")
         var = ar.get_rolling(data=dataset_gauss[:-1], mode="var", show=True)
 
@@ -253,7 +262,7 @@ for beta in betas:
                 tpr, fpr, prob_threshold, distances, auc = get_performances(data=dataset, predictions=predictions, p=ar.p, train_per=ar.train_per, gust_th=ar.gust_th)
                 
                 # xi = get_xi(performances=performances)
-                save_performances(ar=ar, tpr=tpr, fpr=fpr, prob_threshold=prob_threshold, distances=distances, auc=auc)
+                save_performances(ar=ar, tpr=tpr, fpr=fpr, prob_threshold=prob_threshold, distances=distances, auc=auc, mode="c")
                 end = time.time()
 
                 print(f"AR({ar.p}), {vars(ar)}, took {np.round(end-start, 1)} secs.")
