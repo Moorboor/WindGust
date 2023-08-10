@@ -25,7 +25,7 @@ datasets = {key: dataset[1:] - dataset[:-1] for key, dataset in datasets.items()
 
 dname = "2015-2017_100m"                                                             
 dataset = datasets[dname]
-
+dataset[dataset>5] = np.nan  
 
 
 class AR():
@@ -49,16 +49,14 @@ class AR():
         for indices in tqdm(indices_split, disable=not(show)):
             indices = indices[:, None] + np.arange(self.train_per)
             x = data[indices]
-
             if mode == "var":
                 split_rolling = np.nanvar(x, axis=1)
             elif mode == "mean":
                 split_rolling = np.nanmean(x, axis=1) 
-                
             rolling.append(split_rolling)
-            
         return np.concatenate(rolling)
-    
+
+
     def get_phis(self, *, data):
 
         def get_yule_walker(*, acfs):
@@ -72,23 +70,20 @@ class AR():
         z = [np.array(data[lag:] * data[:len(data)-lag])[:len(data)-self.p] for lag in range(0, self.p+1)]
         mean_gammas = [self.get_rolling(data=gamma, mode="mean", show=False) for gamma in z]
         acfs = [np.divide(gamma, mean_gammas[0], out=np.zeros_like(gamma), where=mean_gammas[0]!=0) for gamma in mean_gammas]
-
         acfs = np.stack(acfs)
         matrix_mask = np.array([abs(-k+j) for k in range(self.p) for j in range(self.p)])
         splits = max(int(len(acfs[0]) / 2000), 1)
         phis = [get_yule_walker(acfs=acfs_split) for acfs_split in np.array_split(acfs, splits, axis=1)]
-
         return np.concatenate(phis), np.array(mean_gammas)
     
+
     def forecast(self, *, data, phis, var_w):
 
         indices = np.arange(self.p+self.train_per-1, len(data))[:, None] - np.arange(self.p)
         predictions = data[indices] * phis
         predictions = predictions.sum(axis=1)
-
         white_noise = rng.normal(scale=var_w)
         predictions += white_noise
-            
         return predictions
     
 
@@ -99,31 +94,29 @@ class AR():
         return np.where(var_w==0, 0, predictions)
 
 
-def data_chunks(*, ar, data, var):
+
+
+def data_chunks(*, ar, data):
 
     chunk_size = 1000000
     n_chunks = max(int(len(data)/chunk_size), 1)
     indices = np.arange(len(data)) # t-1
     indices_splits = np.array_split(indices, n_chunks)   
-    var_indices_splits = indices_splits.copy()
-    var_indices_splits[-1] = var_indices_splits[-1][:-ar.train_per-ar.p+1]
     indices_splits[:-1] = [np.append(indices_split, indices_split[-1] + np.arange(1, ar.train_per+ar.p)) for indices_split in indices_splits[:-1]]
 
     predictions = []
 
-    for indices_split, var_indices_split in tqdm(zip(indices_splits, var_indices_splits), total=len(indices_splits)):
+    for indices_split in tqdm(indices_splits):
         data_chunk = data[indices_split]
-        var_chunk = var[var_indices_split]
         phis, mean_gammas = ar.get_phis(data=data_chunk)
 
         # course-corrected variance
-
         var_w_chunk = mean_gammas[0] - (phis * mean_gammas[1:].T).sum(axis=1)
         var_w_chunk[var_w_chunk<0] = 0.001
         
         prediction = ar.forecast(data=data_chunk, phis=phis, var_w=var_w_chunk)
+        # predictions.append(prediction)
         predictions.append(ar.get_integrals(predictions=prediction, var_w=var_w_chunk)) 
-
     return np.concatenate(predictions)
 
 
@@ -131,8 +124,7 @@ def get_performances(*, data, predictions, p, train_per, gust_th):
 
 
     quantiles = np.append([0], 10**np.arange(-9, 0.1, 0.1))
-    # performances = dict.fromkeys(quantiles)
-
+    # quantiles = np.linspace(0,0.5,50)
     wind_nans = np.isnan(data[train_per+p:])
     wind_gusts = np.where(data[train_per+p:] >= gust_th, True, False) # G(t)
     
@@ -144,26 +136,8 @@ def get_performances(*, data, predictions, p, train_per, gust_th):
     predictions = np.delete(predictions, all_nan_idx)
     wind_gusts = np.delete(wind_gusts, all_nan_idx)
 
-
-    tpr, fpr, prob_threshold, distances, auc = ROC(gustprob=predictions, prob_threshold=quantiles, isgustbool=wind_gusts, printing=False)
-    
+    tpr, fpr, prob_threshold, distances, auc = ROC(gustprob=predictions, prob_threshold=quantiles, isgustbool=wind_gusts, printing=True)
     return tpr, fpr, prob_threshold, distances, auc
-
-def get_xi(*, performances):
-    
-    base_1 = np.array([.5,-.5])
-    base_2 = np.array([.5, .5])
-
-    points = dict()
-
-    for key, (y,x) in performances.items():
-        point = x * base_1 + y * base_2
-        points[key] = point
-
-    key = sorted(points.items(), key=lambda item:item[1][1])[-1][0]
-    xi = np.array([[x,y] for key, (x,y) in points.items()])
-
-    return np.max(xi[:, 1])
 
 
 
@@ -176,9 +150,7 @@ def save_performances(*, ar, tpr, fpr, prob_threshold, distances, auc, mode):
     os.makedirs(PERFORMANCE_PATH, exist_ok=True)
     ROCsave = np.column_stack([tpr, fpr]) 
     np.savetxt(os.path.join(PERFORMANCE_PATH, f"{dname}-p={ar.p}-training_per={ar.train_per}-gust_th={ar.gust_th}-beta={ar.beta}-mode={mode}.dat"), ROCsave)
-
     return
-
 
 
 def distanceNorm(x, y):  # normiert auf 1
@@ -223,17 +195,18 @@ def ROC(gustprob, prob_threshold, isgustbool, printing=True):
     integx  = np.flip(fpr)
     # auc     = 2*integrate.trapezoid(y=integy-integx, x=integx)#[-1]
     auc     = integrate.trapezoid(y=integy, x=integx)#[-1]
+    print(f"AUC: {auc}")
     return tpr, fpr, prob_threshold[idxmaxdist], distances[idxmaxdist], auc
 
 
 #----------------------------------------------------------------------------------------------------------------#
 
 gust_ths = [1,1.5,2]
-train_pers = np.unique(np.round(10**np.linspace(np.log10(5), np.log10(10*24*60*60), 200))).astype(int)
-train_pers = [9,16,60,120,308]
+# train_pers = np.unique(np.round(10**np.linspace(np.log10(5), np.log10(10*24*60*60), 200))).astype(int)
+train_pers = [1242]
 p_parameters = [1,2,4,10]
 betas = [1] # 0.644
-
+mode = "c"
 
 n = len(gust_ths) * len(train_pers) * len(p_parameters) * len(betas)
 i = 0
@@ -242,16 +215,10 @@ for beta in betas:
     dataset_gauss = np.sign(dataset) * np.abs(dataset)**beta
 
     for train_per in train_pers:
-        ar = AR(p=None, train_per=None, gust_th=1, beta=1)
-        ar.beta = beta
-        ar.train_per = train_per
-
-        print(f"Getting rolling variances tau=({ar.train_per}): ")
-        var = ar.get_rolling(data=dataset_gauss[:-1], mode="var", show=True)
 
         for p in p_parameters:
-            ar.p = p 
-            predictions = data_chunks(ar=ar, data=dataset_gauss[:-1], var=var[ar.p:])
+            ar = AR(p=p, train_per=train_per, gust_th=1, beta=beta)
+            predictions = data_chunks(ar=ar, data=dataset_gauss[:-1])
 
             for gust_th in gust_ths:
                 ar.gust_th = gust_th
@@ -261,9 +228,5 @@ for beta in betas:
                 print(f"\n({i}/{n}): Getting AR({vars(ar)}) performances:")
                 tpr, fpr, prob_threshold, distances, auc = get_performances(data=dataset, predictions=predictions, p=ar.p, train_per=ar.train_per, gust_th=ar.gust_th)
                 
-                # xi = get_xi(performances=performances)
-                save_performances(ar=ar, tpr=tpr, fpr=fpr, prob_threshold=prob_threshold, distances=distances, auc=auc, mode="c")
-                end = time.time()
-
-                print(f"AR({ar.p}), {vars(ar)}, took {np.round(end-start, 1)} secs.")
-
+                save_performances(ar=ar, tpr=tpr, fpr=fpr, prob_threshold=prob_threshold, distances=distances, auc=auc, mode=mode)
+                print(f"AR({ar.p}), {vars(ar)}, took {np.round(time.time()-start, 1)} secs.")

@@ -2,12 +2,16 @@ import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 import os
-#rng = np.random.default_rng(11)
+from scipy import integrate, special
+# from tqdm import tqdm  
+
+rng = np.random.default_rng(11)
 
 
 DIRNAME = os.path.abspath("")
 PLOTS_PATH = os.path.join(DIRNAME, "Plots")
 DATA_DIR = os.path.join(os.path.dirname(DIRNAME), "FINO1Data")
+ARRAY_PATH = os.path.join(DIRNAME, "Arrays")
 
 os.makedirs(PLOTS_PATH, exist_ok=True)
 datasets = {path.replace(".npy", ""): np.load(os.path.join(DATA_DIR, path), allow_pickle=True) for path in os.listdir(DATA_DIR) if path.endswith("npy")}
@@ -22,18 +26,15 @@ def lerp(data):
     return data
 
 def autocovariance(data, lag):
-    cov = (data - data.mean())[lag:] * (data - data.mean())[:-lag]
-    return np.mean(cov)
+    cov = data[lag:] * data[:-lag]
+    return np.nanmean(cov)
 
 
-datasets = {key: lerp(value) for key, value in datasets.items()}                    # linear interpolation
-datasets = {key: dataset[1:] - dataset[:-1] for key, dataset in datasets.items()}   # Differentiation to make data stationary
-dname = "2015-2017_90m"                                                             # Active dataset
+# datasets = {key: lerp(value) for key, value in datasets.items()}                    # linear interpolation
+datasets = {key: dataset[1:] - dataset[:-1] for key, dataset in datasets.items()}     # Differentiation to make data stationary
+dname = "2015-2017_100m"                                                              # Active dataset
 dataset = datasets[dname]
-
-test_set_size = min(1000000, int(len(dataset) * 0.5))
-train_data = dataset[:-test_set_size]
-test_data = dataset[-test_set_size:]
+dataset[dataset>5] = np.nan                                                           # Exclude Helicopter noise # 194 values
 
 
 
@@ -44,11 +45,12 @@ class AR():
         self.p = p
         self.lags = range(1,p+1)
         self.phis = None
+        self.var_w = None
 
     def get_phis(self, train_data):
 
-        acf = [autocovariance(train_data, lag) / train_data.std()**2 for lag in self.lags]      # Autocorrelation function
-
+        z = [autocovariance(train_data, lag) for lag in self.lags]      # Autocorrelation function
+        acf = [gamma / np.nanvar(train_data) for gamma in z]
         acf.insert(0, 1.)   
         r = [acf[abs(-k+j)] for k in range(self.p) for j in range(self.p)]  # Yule-Walker Estimation with autocorrelation function
         acf.pop(0)
@@ -57,55 +59,96 @@ class AR():
         phi_hats = r_inv_matrix @ np.array(acf).reshape(self.p, 1)
         phi_hats = [phi[0] for phi in phi_hats]
         self.phis = phi_hats
+        self.var_w = acf[0] - sum([phi*gamma for phi, gamma in zip(self.phis, z[1:])])
 
 
     def predict(self, test_data):
-
-        buffer = len(self.phis)
-        predictions = [0] * buffer
-
-        for i, _ in enumerate(test_data):                           # Model predictions only 1 time step into the future
-            prediction = sum([x*phi for x, phi in zip(test_data[i:], reversed(self.phis))])
-            predictions.append(prediction)
-        predictions = np.array(predictions[buffer:2*-buffer])       # predictions shape and test_data shape not equal
-
+        predictions = np.convolve(self.phis, test_data, "valid")
+        predictions += rng.normal(scale=self.var_w, size=len(predictions))
         return predictions
-    
-    def calculate_error(self, predictions, test_data):
-        hypotheses = {}
-        hypotheses.update({f"AR({self.p})": [(x-x_pred)**2 for x, x_pred in zip(predictions, test_data)]})         # Squared losses
-        hypotheses = dict(map(lambda x: (x[0] ,np.mean(x[1])), hypotheses.items()))         # squared errors --> mean squared errors (mse)
-
-        return hypotheses
-    
-    def get_performances(self, predictions, test_data):
-
-        buffer = len(self.phis)
-        test_data = np.array(test_data[buffer:-buffer])
-
-        thresholds = np.round(np.linspace(0, .6, 20), 2)        # Model: Wind gust thresholds
-        u_threshold = 1.5                                       # Test_data: Wind gust thresholds
-        performances = dict.fromkeys(thresholds)
+  
+    def get_integrals(self, *, predictions, gust_th):
         
-        for threshold in thresholds:         
+        z = (gust_th - predictions) / (2*self.var_w)**0.5
+        predictions = 0.5 * (1 - special.erf(z))
+        return np.where(self.var_w==0, 0, predictions)
 
-            accuracies = []
-            wind_gusts = np.where(test_data>=u_threshold, 3, 0)                  # Actual occurance: wind gust
-            wind_gusts_pred = np.where(predictions>=threshold, 1, 0)             # Model prediction: wind gust
+    
+    def get_performances(self, *, data, predictions, gust_th):
 
-            true_positive = np.where(wind_gusts_pred + wind_gusts == 4, 1, 0)            # 3, 0
-            false_positive = np.where(wind_gusts_pred + wind_gusts == 1, 1, 0)           # 1, 0
-            wind_gusts = wind_gusts / 3
+        quantiles = np.append([0], 10**np.arange(-9, 0.1, 0.1))
+        # quantiles = np.linspace(0,0.2,50)
+        wind_nans = np.isnan(data)
+        wind_gusts = np.where(data >= gust_th, True, False) # G(t)
+        
+        wind_gusts[wind_nans]          = np.nan 
+        predictions_nanidx             = np.where(np.isnan(predictions))
+        wind_nans_idx                  = np.where(wind_nans)
 
-            assert wind_gusts.sum() > 0
-            true_positive_rate = sum(true_positive) / sum(wind_gusts)
-            false_positive_rate = sum(false_positive) / sum(np.where(wind_gusts == 0, 1, 0))
-            
-            accuracies.append(true_positive_rate)
-            accuracies.append(false_positive_rate)
-            performances.update({threshold: accuracies})
+        all_nan_idx = np.unique(np.append(wind_nans_idx, predictions_nanidx))
+        predictions = np.delete(predictions, all_nan_idx)
+        wind_gusts = np.delete(wind_gusts, all_nan_idx)
 
-        return performances
+        tpr, fpr, prob_threshold, distances, auc = self.ROC(gustprob=predictions, prob_threshold=quantiles, isgustbool=wind_gusts, printing=True)
+        return tpr, fpr, prob_threshold, distances, auc
+
+
+
+    def distanceNorm(self, x, y):  # normiert auf 1
+        d       = (y - x)
+        return d 
+
+
+    def ROC(self, gustprob, prob_threshold, isgustbool, printing=True):
+    ### iterate through all discrimination thresholds (probability thresholds)
+        tpr          = np.zeros(len(prob_threshold), dtype=float)   # initialize array for sensitivity [same as true positive rate (TPR)]; number of elements equal to number of discrimination thresholds
+        fpr          = np.zeros(len(prob_threshold), dtype=float)   # and for specifity [false positive rate (FPR) = 1 - specifity]
+        for ithreshold in range(len(prob_threshold)):
+        ### Indices of gust alarms: Where do the gust probabilities "gustprob" exceed the probability threshold "prob_threshold"?
+            alert_idx                  = np.ravel(np.where(gustprob >= prob_threshold[ithreshold]))
+        ### Create boolean array with true, if gust alarm
+            predictionalert            = np.array(np.zeros(len(isgustbool)), dtype=bool)     
+            predictionalert[alert_idx] = True 
+        ### Indices, where no gust alarm is
+            nonalert_idx               = np.ravel(np.where(~predictionalert))
+        ### Calculate the number of true positives (there is a gust, and also a gust is predicted)
+            right_alert                = np.count_nonzero(isgustbool[alert_idx])  # count the number of true positives
+        ### Calculate the number of true negatives (there is no gust, and no gust has been predicted)
+            right_nonalert             = np.count_nonzero(~isgustbool[nonalert_idx])
+        ### Total number of all gust events in "dv" ("gustpositive") and of no-gust-events ("gustnegative")
+            gustpositive               = np.count_nonzero(isgustbool) 
+            gustnegative               = np.count_nonzero(~isgustbool)
+            tpr[ithreshold]    = right_alert/gustpositive            # TPR = True positive rate  = TP/P     =     (True positive)/(Total gust number)
+            fpr[ithreshold]    = 1 - right_nonalert/gustnegative     # FPR = False positive rate = 1 - TN/N = 1 - (True negative)/(Total not-gust number)
+        # printing is optional of course
+            if printing:
+                print("\nProbability threshold: " + str(prob_threshold[ithreshold]))  
+                print("True positive rate: " +  str(100*np.round(tpr[ithreshold], 2)) + "%")
+                print("False positive rate: " + str(100*np.round(fpr[ithreshold], 2)) + "%")  
+        # Estimate the distance between the linear line and all [TPR, FPR] points in the ROC plot. There are as much [TPR, FPR] points as "prob_threshold" values exist
+        distances            = np.zeros(len(prob_threshold), dtype=float)
+        for idist in range(len(distances)):
+            distances[idist]      = self.distanceNorm(fpr[idist], tpr[idist])
+        idxmaxdist           = np.ravel(np.where(distances == np.max(distances)))       # find the index of the maximum distance "idxmaxdist" (according to the probability threshold with best predictive power)
+        if printing:
+            print('\nBest probability threshold: ' + str(prob_threshold[idxmaxdist]) + '\n')
+        integy  = np.flip(tpr)
+        integx  = np.flip(fpr)
+        # auc     = 2*integrate.trapezoid(y=integy-integx, x=integx)#[-1]
+        auc     = integrate.trapezoid(y=integy, x=integx)#[-1]
+        print(f"AUC: {auc}")
+        return tpr, fpr, prob_threshold[idxmaxdist], distances[idxmaxdist], auc
+
+
+def save_performances(*, ar, tpr, fpr, prob_threshold, distances, auc, mode, train_per, gust_th):
+    """
+    This is my first doc string! 
+    """
+    PERFORMANCE_PATH = os.path.join(ARRAY_PATH, f"{dname}", f"AutoRegression2", f"AR({ar.p})", f"GustTh={gust_th}", f"Beta=1")
+    os.makedirs(PERFORMANCE_PATH, exist_ok=True)
+    ROCsave = np.column_stack([tpr, fpr]) 
+    np.savetxt(os.path.join(PERFORMANCE_PATH, f"{dname}-p={ar.p}-training_per={train_per}-gust_th={gust_th}-beta=1-mode={mode}.dat"), ROCsave)
+    return
 
 def roc_plot(performances, colorname, p):
 
@@ -135,11 +178,32 @@ def roc_plot(performances, colorname, p):
 
     #plt.savefig(os.path.join(PLOTS_PATH, f"{dname}-AR_overview.png"), format="png", dpi=300, bbox_inches="tight")
 
-ar_2 = AR(2)
 
-ar_2.get_phis(train_data)
-predictions = ar_2.predict(test_data)
-performances = ar_2.get_performances(predictions, test_data)
+# test_set_size = min(3000000, int(len(dataset) * 0.5))
+# train_data = dataset[:-test_set_size]
+#test_data = dataset[-test_set_size:]
 
-color_palette = ["rocket_r", "dark:salmon_r", "dark:b_r", "dark:seagreen_r"]
-roc_plot(performances, color_palette[0], 2)
+train_data = dataset[7750000:7750500]
+test_data = dataset[7750500:]
+
+
+
+p_list = [1,2,4]
+gust_ths = [1,1.5,2]
+mode = "b"
+
+for p in p_list:
+    ar = AR(p)
+    ar.get_phis(train_data)
+    predictions = ar.predict(test_data[:-1])
+
+    for gust_th in gust_ths:
+        predictions_int = ar.get_integrals(predictions=predictions, gust_th=gust_th)
+        tpr, fpr, prob_threshold, distances, auc = ar.get_performances(data=test_data[p:], predictions=predictions_int, gust_th=gust_th)
+        save_performances(ar=ar, tpr=tpr, fpr=fpr, prob_threshold=prob_threshold, distances=distances, auc=auc, mode=mode, train_per=len(train_data), gust_th=gust_th)
+
+
+
+
+# color_palette = ["rocket_r", "dark:salmon_r", "dark:b_r", "dark:seagreen_r"]
+# roc_plot(performances, color_palette[0], 2)
