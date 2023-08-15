@@ -7,9 +7,11 @@ import time
 
 rng = np.random.default_rng(11)
 
-#p_parameters = [int(sys.argv[1])]
-#train_pers = int(sys.argv[2])
+p_parameters = [int(sys.argv[1])]
+train_pers = [int(x) for x in sys.argv[2:]]
 
+print(train_pers, flush=True)
+quit()
 DIRNAME = os.path.abspath("")
 PLOTS_PATH = os.path.join(DIRNAME, "Plots")
 DATA_DIR = os.path.join(os.path.dirname(DIRNAME), "FINO1Data")
@@ -26,7 +28,7 @@ datasets = {key: dataset[1:] - dataset[:-1] for key, dataset in datasets.items()
 dname = "2015-2017_100m"                                                             
 dataset = datasets[dname]
 dataset[dataset>5] = np.nan  
-
+dataset[dataset<-5] = np.nan
 
 class AR():
 
@@ -38,7 +40,7 @@ class AR():
         self.beta = beta
         
 
-    def get_rolling(self, *, data, mode, show):
+    def get_rolling(self, *, data, train_per, mode, show):
 
         # Additional chunking
         indices = np.arange(len(data)-self.train_per+1)
@@ -68,7 +70,7 @@ class AR():
         # TODO Implement substract mean Steinerscher Verschiebungssatz
 
         z = [np.array(data[lag:] * data[:len(data)-lag])[:len(data)-self.p] for lag in range(0, self.p+1)]
-        mean_gammas = [self.get_rolling(data=gamma, mode="mean", show=False) for gamma in z]
+        mean_gammas = [self.get_rolling(data=gamma, train_per=ar.train_per+ar.p-lag, mode="mean", show=False) for lag, gamma in enumerate(z)]
         acfs = [np.divide(gamma, mean_gammas[0], out=np.zeros_like(gamma), where=mean_gammas[0]!=0) for gamma in mean_gammas]
         acfs = np.stack(acfs)
         matrix_mask = np.array([abs(-k+j) for k in range(self.p) for j in range(self.p)])
@@ -110,7 +112,7 @@ def data_chunks(*, ar, data):
         data_chunk = data[indices_split]
         phis, mean_gammas = ar.get_phis(data=data_chunk)
 
-        # course-corrected variance
+        # Yule-Walker variance
         var_w_chunk = mean_gammas[0] - (phis * mean_gammas[1:].T).sum(axis=1)
         var_w_chunk[var_w_chunk<0] = 0.001
         
@@ -203,9 +205,9 @@ def ROC(gustprob, prob_threshold, isgustbool, printing=True):
 
 gust_ths = [1,1.5,2]
 # train_pers = np.unique(np.round(10**np.linspace(np.log10(5), np.log10(10*24*60*60), 200))).astype(int)
-train_pers = [1242]
-p_parameters = [1,2,4,10]
-betas = [1] # 0.644
+# train_pers = [120]
+# p_parameters = [2]
+betas = [1, 0.644] # 0.644
 mode = "c"
 
 n = len(gust_ths) * len(train_pers) * len(p_parameters) * len(betas)
